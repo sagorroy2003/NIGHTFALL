@@ -1,10 +1,11 @@
 import { Game } from './game/game';
 
-// Initialize the game once the DOM is loaded
+// Wait for the DOM to fully load before initializing the game
 window.addEventListener('DOMContentLoaded', () => {
-  const canvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
+  const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
+
   if (!canvas) {
-    console.error('Fatal: Failed to locate #game-canvas element.');
+    console.error("Canvas element not found!");
     return;
   }
 

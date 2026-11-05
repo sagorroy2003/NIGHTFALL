@@ -134,10 +134,22 @@ export class ChaseController {
     // Turn predator to face direction of travel
     predator.angle = Math.atan2(dy, dx);
 
-    // Verify wall collision safety before updating coordinates
-    if (!PhysicsSystem.checkCollision(newX, newY, predator.radius, map, offset)) {
+
+    // Use the tiny hitbox (2) so the predator doesn't snag corners while chasing!
+    if (!PhysicsSystem.checkCollision(newX, newY, 2, map, offset)) {
       predator.x = newX;
       predator.y = newY;
+    } else {
+      // 5. Move smoothly toward target cell (IGNORE PHYSICS)
+      // A* guarantees the path is walkable, so we bypass strict collision.
+      const dirX = dx / distance;
+      const dirY = dy / distance;
+
+      predator.x += dirX * stepDistance;
+      predator.y += dirY * stepDistance;
+
+      // Face direction of current motion
+      predator.angle = Math.atan2(dy, dx);
     }
 
     return false;

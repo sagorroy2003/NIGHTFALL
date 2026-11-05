@@ -1,58 +1,170 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NIGHTFALL</title>
-    <style>
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-      html, body {
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background-color: #050608;
-        color: #e6e6e6;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      }
-      #app {
-        position: relative;
-        width: 100%;
-        height: 100%;
-      }
-      #ui-overlay {
-        position: absolute;
-        top: 20px;
-        left: 24px;
-        pointer-events: none;
-        user-select: none;
-        z-index: 10;
-      }
-      h1 {
-        font-size: 2rem;
-        letter-spacing: 0.35em;
-        text-transform: uppercase;
-        font-weight: 700;
-        color: rgba(220, 225, 230, 0.8);
-        text-shadow: 0 0 16px rgba(0, 0, 0, 0.9);
-      }
-      #game-canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="app">
-      <div id="ui-overlay">
-        <h1>NIGHTFALL</h1>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NIGHTFALL</title>
+  <style>
+    body,
+    html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #06070a;
+      font-family: 'Courier New', Courier, monospace;
+      color: #fff;
+    }
+
+    #game-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* UI Overlay Container */
+    #ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 10;
+      transition: opacity 0.3s;
+    }
+
+    .hidden {
+      display: none !important;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 64px;
+      color: #4fa3d1;
+      margin: 0 0 10px 0;
+      letter-spacing: 4px;
+    }
+
+    h1.dead {
+      color: #d90429;
+    }
+
+    h1.win {
+      color: #3ddc84;
+    }
+
+    h2 {
+      font-size: 24px;
+      color: #8899aa;
+      font-weight: normal;
+      margin-bottom: 40px;
+      letter-spacing: 2px;
+    }
+
+    /* Buttons */
+    .btn {
+      background: transparent;
+      border: 1px solid #4fa3d1;
+      color: #4fa3d1;
+      padding: 12px 32px;
+      font-size: 18px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin: 10px;
+      width: 250px;
+      text-align: center;
+    }
+
+    .btn:hover {
+      background: rgba(79, 163, 209, 0.15);
+      border-color: #fff;
+      color: #fff;
+    }
+
+    .btn.danger {
+      border-color: #d90429;
+      color: #d90429;
+    }
+
+    .btn.danger:hover {
+      background: rgba(217, 4, 41, 0.15);
+      border-color: #ff4d4d;
+      color: #ff4d4d;
+    }
+
+    .btn.success {
+      border-color: #3ddc84;
+      color: #3ddc84;
+    }
+
+    .btn.success:hover {
+      background: rgba(61, 220, 132, 0.15);
+      border-color: #fff;
+      color: #fff;
+    }
+
+    /* Instructions Panel */
+    .instructions {
+      margin-top: 30px;
+      padding: 20px;
+      border: 1px solid #1a2030;
+      background: rgba(5, 8, 15, 0.8);
+      text-align: left;
+      font-size: 14px;
+      color: #8899aa;
+      width: 400px;
+    }
+
+    .instructions span {
+      color: #fff;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="game-container">
+    <!-- The Game Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- The HTML Menu Overlay -->
+    <div id="ui-layer">
+      <h1 id="ui-title">NIGHTFALL</h1>
+      <h2 id="ui-subtitle">SURVIVE THE FACILITY</h2>
+
+      <button id="btn-play" class="btn hidden">PLAY</button>
+      <button id="btn-restart" class="btn hidden">RESTART</button>
+      <button id="btn-menu" class="btn hidden">RETURN TO MENU</button>
+
+      <div id="ui-instructions" class="instructions hidden">
+        <span>CONTROLS</span><br>
+        WASD / Arrows - Move<br>
+        E - Interact<br><br>
+        <span>OBJECTIVES</span><br>
+        1. Collect 3 Power Cells<br>
+        2. Restore the Generator<br>
+        3. Escape through the Exit<br><br>
+        Avoid the predator at all costs.
       </div>
-      <canvas id="game-canvas"></canvas>
     </div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>

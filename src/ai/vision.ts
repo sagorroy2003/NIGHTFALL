@@ -33,8 +33,9 @@ export class VisionSystem {
   public range: number;
   public fovAngle: number;
 
+  // Default values for the vision system
   constructor(config?: VisionConfig) {
-    this.range = config?.range ?? 260; // ~5.4 tiles at 48px/tile
+    this.range = config?.range ?? 350; // ~5.4 tiles at 48px/tile
     this.fovAngle = config?.fovAngle ?? Math.PI * 0.6; // ~108 degrees
   }
 

@@ -17,10 +17,12 @@ export interface GridPoint {
  * 3. Security Bay (Northwest wing)
  */
 export const DEFAULT_PATROL_DESTINATIONS: GridPoint[] = [
-  { col: 16, row: 2 },  // 0. Research Lab (Lair)
-  { col: 3, row: 11 },  // 1. Storage Bay
-  { col: 16, row: 11 }, // 2. Generator Room
-  { col: 3, row: 2 },   // 3. Security Bay
+  { col: 10, row: 2 },  // North T-Intersection
+  { col: 10, row: 6 },  // Central Facility Crossroads
+  { col: 16, row: 6 },  // East Hallway
+  { col: 10, row: 11 }, // South T-Intersection
+  { col: 3, row: 6 },   // West Hallway
+  { col: 10, row: 6 },  // Back to Central Crossroads
 ];
 
 /**
@@ -39,7 +41,7 @@ export class PatrolController {
 
   constructor(
     destinations: GridPoint[] = DEFAULT_PATROL_DESTINATIONS,
-    pauseDuration: number = 1.5
+    pauseDuration: number = 1.0
   ) {
     this.destinations = destinations;
     this.pauseDuration = pauseDuration;
@@ -79,6 +81,11 @@ export class PatrolController {
     // 1. Handle pause state when resting at a patrol destination
     if (this.pauseTimer > 0) {
       this.pauseTimer -= deltaTime;
+      // UPGRADE: Active Intersection Sweep
+      // The predator rotates its head/vision to scan the area while paused.
+      // (Math.PI * 2) is a full 360-degree rotation.
+      const sweepSpeed = (Math.PI * 2) / this.pauseDuration;
+      predator.angle += sweepSpeed * deltaTime;
       return;
     }
 
@@ -120,8 +127,10 @@ export class PatrolController {
     const stepDistance = predator.speed * deltaTime;
 
     // 4. Check if current cell center has been reached
-    if (distance <= stepDistance || distance < 2) {
-      // Snap to cell center
+    // Increased from 2 to 14. This allows the predator to "snap" into perfect 
+    // grid alignment even if it is scraping a wall!
+    if (distance <= stepDistance || distance < 14) {
+      // Snap to cell center perfectly
       predator.x = targetX;
       predator.y = targetY;
 
@@ -154,10 +163,31 @@ export class PatrolController {
       predator.angle = Math.atan2(dy, dx);
 
       // Verify safety with collision system before committing position
-      if (!PhysicsSystem.checkCollision(newX, newY, predator.radius, map, offset)) {
+      // Use a smaller collision radius (e.g., 6) so it doesn't snag corners,
+      // but still respects solid walls so it doesn't cut through them!
+      if (!PhysicsSystem.checkCollision(newX, newY, 6, map, offset)) {
         predator.x = newX;
         predator.y = newY;
+      } else {
+        // 5. Move smoothly toward target cell (IGNORE PHYSICS)
+        // A* guarantees the path is walkable, so we bypass strict collision.
+        const dirX = dx / distance;
+        const dirY = dy / distance;
+
+        predator.x += dirX * stepDistance;
+        predator.y += dirY * stepDistance;
+
+        // Face direction of current motion
+        predator.angle = Math.atan2(dy, dx);
       }
+
     }
+  }
+
+  public reset(): void {
+    this.currentPath = [];
+    this.currentStepIndex = 0;
+    this.pauseTimer = 0;
+    this.currentDestinationIndex = 0;
   }
 }

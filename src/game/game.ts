@@ -10,33 +10,22 @@ import { PredatorFSM, PredatorState } from '../ai/fsm';
 import { PredatorMemory } from '../ai/memory';
 import { SoundSystem, SoundEvent } from '../ai/sound';
 import { Player, createPlayer } from './player';
-import { Predator, createPredator } from './predator';
+import { Predator, createPredator, checkPredatorCatch } from './predator';
 import { GameMap } from './map';
+import { GameState, stateManager } from './gameState';
+import { ObjectiveSystem } from './objectives';
+import { Interactable, InteractableType, generateRandomInteractables } from './interactables';
+import { AudioManager } from '../systems/audio'; // NEW AUDIO
 
-/**
- * Main Game class — NIGHTFALL Predator Intelligence Integration.
- *
- * Orchestrates the complete game loop:
- *   - Player movement with wall collision (WASD / Arrow keys)
- *   - Predator FSM with priority: CHASE > INVESTIGATE > SEARCH > PATROL
- *   - A* navigation for all predator states
- *   - Predator memory (last known player position)
- *   - Vision perception (FOV + ray-cast LOS)
- *   - Sound perception (grid-based events, intensity-scaled range)
- *   - Debug HUD overlay (toggled with the F key)
- *   - Rendering: map, predator, vignette, player, optional HUD
- */
+
 export class Game {
-  // ── Core systems ────────────────────────────────────────────────────────
   private renderer: Renderer;
   private inputSystem: InputSystem;
   private map: GameMap;
 
-  // ── Entities ────────────────────────────────────────────────────────────
   private player: Player;
   private predator: Predator;
 
-  // ── AI sub-systems ───────────────────────────────────────────────────────
   private patrolController: PatrolController;
   private chaseController: ChaseController;
   private searchController: SearchController;
@@ -45,339 +34,420 @@ export class Game {
   private predatorFSM: PredatorFSM;
   private predatorMemory: PredatorMemory;
   private soundSystem: SoundSystem;
+  private objectiveSystem: ObjectiveSystem;
+  private audioManager: AudioManager; // NEW AUDIO
 
-  // ── Frame state ──────────────────────────────────────────────────────────
   private latestVisionResult: VisionResult | null = null;
   private isRunning: boolean = false;
   private lastTime: number = 0;
   private animationFrameId: number | null = null;
 
-  // ── Viewport ─────────────────────────────────────────────────────────────
   private resizeHandler: () => void;
   private currentOffset: { x: number; y: number };
 
-  // ── Debug HUD ────────────────────────────────────────────────────────────
-  /**
-   * When true, the AI debug HUD is rendered.
-   * Toggle by pressing the F key while the game is running.
-   */
   private debugEnabled: boolean = false;
-
-  /**
-   * Column of the last active sound investigation target (shown in HUD).
-   * Cleared when investigation ends.
-   */
   private lastInvestigateCol: number | null = null;
-  /**
-   * Row of the last active sound investigation target (shown in HUD).
-   */
   private lastInvestigateRow: number | null = null;
+
+  private items: Interactable[] = [];
+  private currentInteractionPrompt: string | null = null;
+  private nearestInteractable: Interactable | null = null;
+
+  private lightningTimer: number = 5 + Math.random() * 10;
+  private lightningFlashIntensity: number = 0;
+
+  private spawnPoints = [
+    { col: 3, row: 2 },
+    { col: 16, row: 2 },
+    { col: 3, row: 11 },
+    { col: 10, row: 2 },
+    { col: 10, row: 11 }
+  ];
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.inputSystem = new InputSystem();
     this.map = new GameMap();
+    this.objectiveSystem = new ObjectiveSystem();
+    this.audioManager = new AudioManager(); // NEW AUDIO
+    this.items = generateRandomInteractables(this.map);
 
-    // ── AI controllers ────────────────────────────────────────────────────
-    this.patrolController      = new PatrolController();
-    this.chaseController       = new ChaseController();
-    this.searchController      = new SearchController();
+    this.patrolController = new PatrolController();
+    this.chaseController = new ChaseController();
+    this.searchController = new SearchController();
     this.investigateController = new InvestigateController();
-    this.visionSystem          = new VisionSystem();
-    this.predatorFSM           = new PredatorFSM(PredatorState.PATROL);
-    this.predatorMemory        = new PredatorMemory();
-    this.soundSystem           = new SoundSystem();
+    this.visionSystem = new VisionSystem();
+    this.predatorFSM = new PredatorFSM(PredatorState.PATROL);
+    this.predatorMemory = new PredatorMemory();
+    this.soundSystem = new SoundSystem();
 
     this.currentOffset = this.getMapOffset();
 
-    // ── Spawn player in central hallway (Row 6, Col 10) ──────────────────
-    const playerSpawnX = this.currentOffset.x + (10 + 0.5) * this.map.tileSize;
-    const playerSpawnY = this.currentOffset.y + (6  + 0.5) * this.map.tileSize;
-    this.player = createPlayer(playerSpawnX, playerSpawnY);
+    this.player = createPlayer(0, 0);
+    this.predator = createPredator(0, 0);
+    this.randomizeSpawns();
 
-    // ── Spawn predator in Research Lab (Row 2, Col 16) ───────────────────
-    const predatorSpawnX = this.currentOffset.x + (16 + 0.5) * this.map.tileSize;
-    const predatorSpawnY = this.currentOffset.y + (2  + 0.5) * this.map.tileSize;
-    this.predator = createPredator(predatorSpawnX, predatorSpawnY);
-
-    // ── Reposition entities when viewport is resized ──────────────────────
     this.resizeHandler = () => {
       const newOffset = this.getMapOffset();
       const deltaX = newOffset.x - this.currentOffset.x;
       const deltaY = newOffset.y - this.currentOffset.y;
-      this.player.x  += deltaX;
-      this.player.y  += deltaY;
-      this.predator.x += deltaX;
-      this.predator.y += deltaY;
+      this.player.x += deltaX; this.player.y += deltaY;
+      this.player.startX += deltaX; this.player.startY += deltaY;
+      this.predator.x += deltaX; this.predator.y += deltaY;
+      this.predator.startX += deltaX; this.predator.startY += deltaY;
       this.currentOffset = newOffset;
     };
     window.addEventListener('resize', this.resizeHandler);
-
-    // ── Debug HUD toggle key (F) ──────────────────────────────────────────
-    this.setupDebugKey();
+    this.setupGlobalControls();
   }
 
-  // ─── Public API ───────────────────────────────────────────────────────────
+  public getVisionResult(): VisionResult | null { return this.latestVisionResult; }
+  public getPredatorFSM(): PredatorFSM { return this.predatorFSM; }
+  public emitSound(event: SoundEvent): void { this.soundSystem.emit(event); }
 
-  /**
-   * Returns the most recent vision evaluation result.
-   */
-  public getVisionResult(): VisionResult | null {
-    return this.latestVisionResult;
-  }
-
-  /**
-   * Returns the predator FSM for external inspection or testing.
-   */
-  public getPredatorFSM(): PredatorFSM {
-    return this.predatorFSM;
-  }
-
-  /**
-   * Submits a sound event to the sound perception system.
-   * Any game system (input, physics, story triggers) can call this.
-   *
-   * @param event - SoundEvent with grid position and intensity
-   */
-  public emitSound(event: SoundEvent): void {
-    this.soundSystem.emit(event);
-  }
-
-  /**
-   * Starts the game loop.
-   */
   public start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
     this.lastTime = performance.now();
+    stateManager.state = GameState.MENU;
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
-    console.log('[NIGHTFALL] Game loop started. Press F to toggle AI debug HUD.');
   }
 
-  /**
-   * Stops the game loop and cleans up event listeners.
-   */
   public stop(): void {
     this.isRunning = false;
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    if (this.animationFrameId !== null) { cancelAnimationFrame(this.animationFrameId); this.animationFrameId = null; }
     this.inputSystem.cleanup();
     this.renderer.cleanup();
+    this.audioManager.stopAll();
     window.removeEventListener('resize', this.resizeHandler);
-    console.log('[NIGHTFALL] Game loop stopped.');
   }
 
-  // ─── Core Loop ────────────────────────────────────────────────────────────
-
-  /** Main animation frame callback. */
   private gameLoop = (currentTime: number): void => {
     if (!this.isRunning) return;
-
-    // Cap delta time to 100ms to prevent spiral-of-death on hidden tabs
     const rawDelta = (currentTime - this.lastTime) / 1000;
     const deltaTime = Math.min(rawDelta, 0.1);
     this.lastTime = currentTime;
 
-    this.update(deltaTime);
+    this.update(deltaTime, currentTime); // Passed currentTime for audio
     this.render();
 
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
   };
 
-  /**
-   * Per-frame update: player movement, vision, sound, FSM transitions, AI behavior.
-   */
-  private update(deltaTime: number): void {
+  private update(deltaTime: number, currentTime: number): void {
+    if (!stateManager.isPlaying()) return;
+
     const movement = this.inputSystem.getMovementVector();
-    const offset   = this.getMapOffset();
+    const offset = this.getMapOffset();
 
-    // ── 1. Move player ────────────────────────────────────────────────────
     PhysicsSystem.updatePlayerMovement(this.player, movement, this.map, offset, deltaTime);
+    this.objectiveSystem.update(deltaTime);
 
-    // ── 2. Advance FSM timer ──────────────────────────────────────────────
+    // --- CONTINUOUS BROKEN LIGHT LOGIC ---
+    this.lightningTimer -= deltaTime;
+
+    if (this.lightningTimer <= 0) {
+      // Random intensity: sometimes a bright spark (1.0), sometimes a dim glow (0.2)
+      this.lightningFlashIntensity = 0.2 + Math.random() * 0.8;
+
+      // Extremely short intervals for a continuous, erratic strobe (0.05s to 0.4s)
+      this.lightningTimer = 0.05 + Math.random() * 0.35;
+
+      // Only play the loud audio 5% of the time so the speakers don't distort
+      if (Math.random() > 0.95) {
+        this.audioManager.playThunder();
+      }
+    }
+
+    // Fade out rapidly to create the constant "dipping" and "dimming" effect
+    if (this.lightningFlashIntensity > 0) {
+      this.lightningFlashIntensity -= deltaTime * 5.0;
+      if (this.lightningFlashIntensity < 0) {
+        this.lightningFlashIntensity = 0;
+      }
+    }
+    // --------------------------------------
+
+    // AUDIO: Update Heartbeat based on distance
+    const distToPredator = Math.hypot(this.player.x - this.predator.x, this.player.y - this.predator.y);
+    this.audioManager.updateHeartbeat(distToPredator, currentTime);
+
+    if (!this.player.isDead && checkPredatorCatch(this.predator, this.player)) {
+      this.player.isDead = true;
+      stateManager.state = GameState.GAME_OVER;
+      this.audioManager.stopAll(); // Stop scary sounds
+      this.updateHTMLOverlay();
+      return;
+    }
+
+    this.updateInteractions(offset);
     this.predatorFSM.update(deltaTime);
 
-    // ── 3. Evaluate predator vision ───────────────────────────────────────
-    this.latestVisionResult = this.visionSystem.evaluate(
-      this.predator, this.player, this.map, offset
-    );
+    this.latestVisionResult = this.visionSystem.evaluate(this.predator, this.player, this.map, offset);
     const canSeePlayer = this.latestVisionResult.canSeePlayer;
 
-    // ── 4. Update predator memory (only records when player is visible) ───
     const playerGrid = PhysicsSystem.canvasToGrid(this.player.x, this.player.y, this.map, offset);
     this.predatorMemory.update(canSeePlayer, playerGrid.col, playerGrid.row);
 
-    // ── 5. FSM Transition Logic (Priority: CHASE > INVESTIGATE > SEARCH > PATROL) ──
     this.evaluateTransitions(canSeePlayer, offset, deltaTime);
-
-    // ── 6. Execute behavior for the current active state ──────────────────
     this.executeBehavior(offset, deltaTime);
   }
 
-  /**
-   * Evaluates FSM state transitions with the defined priority order.
-   *
-   * Priority rules:
-   *   1. CHASE has highest priority — any visible player triggers or sustains it.
-   *   2. INVESTIGATE — triggered by sound when NOT already chasing.
-   *   3. SEARCH — entered when CHASE loses the player.
-   *   4. PATROL — lowest priority fallback.
-   */
-  private evaluateTransitions(
-    canSeePlayer: boolean,
-    offset: { x: number; y: number },
-    _deltaTime: number
-  ): void {
-    const state = this.predatorFSM.getState();
+  private updateInteractions(offset: { x: number; y: number }): void {
+    const INTERACT_RADIUS = this.map.tileSize * 1.5;
+    this.nearestInteractable = null;
+    this.currentInteractionPrompt = null;
+    let closestDist = Infinity;
 
-    // Priority 1: Visible player always triggers CHASE (from any state)
-    if (canSeePlayer && state !== PredatorState.CHASE) {
-      if (this.predatorFSM.transitionTo(PredatorState.CHASE)) {
-        this.chaseController.reset();
-        console.log('[FSM] → CHASE (player spotted)');
+    for (const item of this.items) {
+      if (!item.active) continue;
+      const itemX = offset.x + (item.col + 0.5) * this.map.tileSize;
+      const itemY = offset.y + (item.row + 0.5) * this.map.tileSize;
+      const dist = Math.hypot(this.player.x - itemX, this.player.y - itemY);
+      if (dist < INTERACT_RADIUS && dist < closestDist) {
+        closestDist = dist;
+        this.nearestInteractable = item;
       }
-      return;
     }
 
-    // Priority 2: Active CHASE — no sound interruptions; lose sight → SEARCH
+    if (this.nearestInteractable) {
+      switch (this.nearestInteractable.type) {
+        case InteractableType.POWER_CELL: this.currentInteractionPrompt = "Press E — Collect Power Cell"; break;
+        case InteractableType.GENERATOR: this.currentInteractionPrompt = "Press E — Activate Generator"; break;
+        case InteractableType.EXIT: this.currentInteractionPrompt = "Press E — Escape"; break;
+      }
+    }
+  }
+
+  private handleInteraction(): void {
+    if (!stateManager.isPlaying() || !this.nearestInteractable) return;
+
+    const item = this.nearestInteractable;
+    const playerGrid = PhysicsSystem.canvasToGrid(this.player.x, this.player.y, this.map, this.currentOffset);
+
+    if (item.type === InteractableType.POWER_CELL) {
+      item.active = false;
+      this.objectiveSystem.powerCellsCollected++;
+      this.emitSound({ col: playerGrid.col, row: playerGrid.row, intensity: 1.0 });
+    } else if (item.type === InteractableType.GENERATOR) {
+      if (this.objectiveSystem.powerCellsCollected >= 3) {
+        this.objectiveSystem.generatorActive = true;
+        this.objectiveSystem.setFeedback("GENERATOR ONLINE - EXIT UNLOCKED");
+        this.emitSound({ col: playerGrid.col, row: playerGrid.row, intensity: 2.0 });
+      } else {
+        this.objectiveSystem.setFeedback("GENERATOR OFFLINE - NEEDS 3 CELLS");
+      }
+    } else if (item.type === InteractableType.EXIT) {
+      if (this.objectiveSystem.generatorActive) {
+        stateManager.state = GameState.VICTORY;
+        this.audioManager.stopAll();
+        this.updateHTMLOverlay();
+      } else {
+        this.objectiveSystem.setFeedback("EXIT LOCKED - RESTORE POWER FIRST");
+      }
+    }
+  }
+
+  private evaluateTransitions(canSeePlayer: boolean, offset: { x: number; y: number }, _deltaTime: number): void {
+    const state = this.predatorFSM.getState();
+    if (canSeePlayer && state !== PredatorState.CHASE) {
+      if (this.predatorFSM.transitionTo(PredatorState.CHASE)) this.chaseController.reset();
+      return;
+    }
     if (state === PredatorState.CHASE && !canSeePlayer) {
       this.chaseController.reset();
       const memory = this.predatorMemory.get();
-      if (memory.hasMemory) {
-        this.searchController.reset(memory.lastKnownCol!, memory.lastKnownRow!);
-      }
-      if (this.predatorFSM.transitionTo(PredatorState.SEARCH)) {
-        console.log('[FSM] → SEARCH (player lost)');
-      }
+      if (memory.hasMemory) this.searchController.reset(memory.lastKnownCol!, memory.lastKnownRow!);
+      this.predatorFSM.transitionTo(PredatorState.SEARCH);
       return;
     }
-
-    // Priority 3: Sound detection (only when NOT in CHASE)
     if (state !== PredatorState.CHASE) {
-      const soundResult = this.soundSystem.evaluate(
-        this.predator.x,
-        this.predator.y,
-        this.map,
-        offset
-      );
-
+      const soundResult = this.soundSystem.evaluate(this.predator.x, this.predator.y, this.map, offset);
       if (soundResult.detectedEvent !== null) {
         const ev = soundResult.detectedEvent;
         this.investigateController.setTarget(ev.col, ev.row);
         this.lastInvestigateCol = ev.col;
         this.lastInvestigateRow = ev.row;
-        if (this.predatorFSM.transitionTo(PredatorState.INVESTIGATE)) {
-          console.log(`[FSM] → INVESTIGATE sound at (${ev.col}, ${ev.row})`);
-        }
+        this.predatorFSM.transitionTo(PredatorState.INVESTIGATE);
         return;
       }
     }
-
-    // Priority 4: State-specific exit conditions
     switch (state) {
       case PredatorState.SEARCH:
         if (this.searchController.isComplete()) {
           this.predatorMemory.clear();
           this.lastInvestigateCol = null;
           this.lastInvestigateRow = null;
-          if (this.predatorFSM.transitionTo(PredatorState.PATROL)) {
-            console.log('[FSM] → PATROL (search timeout)');
-          }
+          this.predatorFSM.transitionTo(PredatorState.PATROL);
         }
         break;
-
       case PredatorState.INVESTIGATE:
         if (this.investigateController.hasArrived()) {
           this.lastInvestigateCol = null;
           this.lastInvestigateRow = null;
-          if (this.predatorFSM.transitionTo(PredatorState.PATROL)) {
-            console.log('[FSM] → PATROL (investigation complete)');
-          }
+          this.predatorFSM.transitionTo(PredatorState.PATROL);
         }
         break;
-
-      default:
-        break;
     }
   }
 
-  /**
-   * Dispatches behavior execution to the appropriate controller
-   * for the predator's current FSM state.
-   */
   private executeBehavior(offset: { x: number; y: number }, deltaTime: number): void {
     switch (this.predatorFSM.getState()) {
-      case PredatorState.PATROL:
-        this.patrolController.update(this.predator, this.map, offset, deltaTime);
-        break;
-
-      case PredatorState.CHASE:
-        this.chaseController.update(
-          this.predator, this.player, this.map, offset, deltaTime
-        );
-        break;
-
-      case PredatorState.SEARCH:
-        this.searchController.update(this.predator, this.map, offset, deltaTime);
-        break;
-
-      case PredatorState.INVESTIGATE:
-        this.investigateController.update(this.predator, this.map, offset, deltaTime);
-        break;
+      case PredatorState.PATROL: this.patrolController.update(this.predator, this.map, offset, deltaTime); break;
+      case PredatorState.CHASE: this.chaseController.update(this.predator, this.player, this.map, offset, deltaTime); break;
+      case PredatorState.SEARCH: this.searchController.update(this.predator, this.map, offset, deltaTime); break;
+      case PredatorState.INVESTIGATE: this.investigateController.update(this.predator, this.map, offset, deltaTime); break;
     }
   }
 
-  /**
-   * Renders the frame: background → map → predator → vignette → player → HUD.
-   */
   private render(): void {
     const offset = this.getMapOffset();
 
     this.renderer.clear();
     this.renderer.renderBackground();
     this.renderer.renderMap(this.map, offset.x, offset.y);
+
+    // Draw the items, predator, and player UNDER the darkness
+    this.renderer.renderInteractables(this.items, this.map, offset.x, offset.y, this.objectiveSystem.generatorActive);
     this.renderer.renderPredator(this.predator);
-    this.renderer.renderVignette(this.player.x, this.player.y);
     this.renderer.renderPlayer(this.player);
 
+    // 1. Apply the Pitch-Black Flashlight Darkness (or turn it off if power is restored!)
+    // Change your renderLighting line to this:
+    this.renderer.renderLighting(this.player, this.objectiveSystem.generatorActive, this.lightningFlashIntensity);
+
+    // 2. Draw Predator's Red Radar Cone ON TOP of the darkness so it glows!
+    this.renderer.renderPredatorVision(this.predator);
+
+    // Draw UI on top of everything
+    if (stateManager.isPlaying()) {
+      this.renderer.renderObjectiveHUD(this.objectiveSystem);
+      if (this.currentInteractionPrompt) {
+        this.renderer.renderInteractionPrompt(this.currentInteractionPrompt);
+      }
+    }
     if (this.debugEnabled) {
       const memory = this.predatorMemory.get();
       this.renderer.renderDebugHUD(
         this.predatorFSM.getState(),
         this.latestVisionResult?.canSeePlayer ?? false,
-        memory.lastKnownCol,
-        memory.lastKnownRow,
-        this.lastInvestigateCol,
-        this.lastInvestigateRow
+        memory.lastKnownCol, memory.lastKnownRow,
+        this.lastInvestigateCol, this.lastInvestigateRow
       );
     }
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
-
-  /**
-   * Calculates the pixel offset needed to center the map on the viewport.
-   */
   private getMapOffset(): { x: number; y: number } {
     const mapW = this.map.getWidthInPixels();
     const mapH = this.map.getHeightInPixels();
     return {
-      x: Math.max(0, Math.floor((this.renderer.getWidth()  - mapW) / 2)),
+      x: Math.max(0, Math.floor((this.renderer.getWidth() - mapW) / 2)),
       y: Math.max(0, Math.floor((this.renderer.getHeight() - mapH) / 2)),
     };
   }
 
-  /**
-   * Registers the F-key listener that toggles the AI debug HUD.
-   */
-  private setupDebugKey(): void {
+  private randomizeSpawns(): void {
+    const offset = this.currentOffset || this.getMapOffset();
+    const playerIndex = Math.floor(Math.random() * this.spawnPoints.length);
+    let predatorIndex = Math.floor(Math.random() * this.spawnPoints.length);
+    while (predatorIndex === playerIndex) predatorIndex = Math.floor(Math.random() * this.spawnPoints.length);
+
+    const pSpawn = this.spawnPoints[playerIndex];
+    const mSpawn = this.spawnPoints[predatorIndex];
+
+    this.player.startX = offset.x + (pSpawn.col + 0.5) * this.map.tileSize;
+    this.player.startY = offset.y + (pSpawn.row + 0.5) * this.map.tileSize;
+    this.player.x = this.player.startX; this.player.y = this.player.startY;
+
+    this.predator.startX = offset.x + (mSpawn.col + 0.5) * this.map.tileSize;
+    this.predator.startY = offset.y + (mSpawn.row + 0.5) * this.map.tileSize;
+    this.predator.x = this.predator.startX; this.predator.y = this.predator.startY;
+  }
+
+  private updateHTMLOverlay(): void {
+    const layer = document.getElementById('ui-layer');
+    const title = document.getElementById('ui-title');
+    const subtitle = document.getElementById('ui-subtitle');
+    const btnPlay = document.getElementById('btn-play');
+    const btnRestart = document.getElementById('btn-restart');
+    const btnMenu = document.getElementById('btn-menu');
+    const instructions = document.getElementById('ui-instructions');
+
+    if (!layer || !title || !subtitle || !btnPlay || !btnRestart || !btnMenu || !instructions) return;
+
+    title.className = ''; btnPlay.className = 'btn hidden';
+    btnRestart.className = 'btn hidden'; btnMenu.className = 'btn hidden';
+    instructions.className = 'instructions hidden';
+
+    const state = stateManager.state;
+
+    if (state === GameState.PLAYING) {
+      layer.classList.add('hidden');
+    } else {
+      layer.classList.remove('hidden');
+      if (state === GameState.MENU) {
+        title.innerText = 'NIGHTFALL';
+        subtitle.innerText = 'SURVIVE THE FACILITY';
+        btnPlay.className = 'btn';
+        instructions.className = 'instructions';
+      } else if (state === GameState.GAME_OVER) {
+        title.innerText = 'YOU ARE DEAD';
+        title.className = 'dead';
+        subtitle.innerText = 'THE PREDATOR CAUGHT YOU';
+        btnRestart.className = 'btn danger';
+        btnMenu.className = 'btn';
+      } else if (state === GameState.VICTORY) {
+        title.innerText = 'FACILITY ESCAPED';
+        title.className = 'win';
+        subtitle.innerText = 'YOU SURVIVED NIGHTFALL';
+        btnRestart.className = 'btn success';
+        btnMenu.className = 'btn';
+      }
+    }
+  }
+
+  private setupGlobalControls(): void {
+    document.getElementById('btn-play')?.addEventListener('click', () => this.resetGame());
+    document.getElementById('btn-restart')?.addEventListener('click', () => this.resetGame());
+    document.getElementById('btn-menu')?.addEventListener('click', () => {
+      stateManager.state = GameState.MENU;
+      this.updateHTMLOverlay();
+    });
+
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'f' || e.key === 'F') {
-        this.debugEnabled = !this.debugEnabled;
-        console.log(`[NIGHTFALL] Debug HUD ${this.debugEnabled ? 'ON' : 'OFF'}`);
+      if (e.key === 'f' || e.key === 'F') this.debugEnabled = !this.debugEnabled;
+      if (e.key === 'e' || e.key === 'E') this.handleInteraction();
+      if (e.key === 'Enter') {
+        const current = stateManager.state;
+        if (current === GameState.MENU || current === GameState.GAME_OVER || current === GameState.VICTORY) {
+          this.resetGame();
+        }
       }
     });
+
+    this.updateHTMLOverlay();
+  }
+
+  private resetGame(): void {
+    this.randomizeSpawns();
+    this.player.isDead = false;
+    this.objectiveSystem.reset();
+    this.items = generateRandomInteractables(this.map);
+    this.predatorFSM.transitionTo(PredatorState.PATROL);
+    this.predatorMemory.clear();
+    this.patrolController.reset();
+    this.chaseController.reset();
+    this.lastInvestigateCol = null;
+    this.lastInvestigateRow = null;
+
+    stateManager.state = GameState.PLAYING;
+    this.updateHTMLOverlay();
+
+    // START THE CREEPY AUDIO
+    this.audioManager.init();
+    this.audioManager.startDrone();
+
+    this.lightningTimer = 3 + Math.random() * 5; // First strike happens quickly
+    this.lightningFlashIntensity = 0;
   }
 }

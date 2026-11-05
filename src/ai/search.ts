@@ -169,7 +169,7 @@ export class SearchController {
     const distance = Math.hypot(dx, dy);
     const stepDistance = predator.speed * deltaTime;
 
-    if (distance <= stepDistance || distance < 2) {
+    if (distance <= stepDistance || distance < 14) {
       predator.x = targetX;
       predator.y = targetY;
       this.currentStepIndex++;
@@ -179,9 +179,21 @@ export class SearchController {
       const newX = predator.x + dirX * stepDistance;
       const newY = predator.y + dirY * stepDistance;
       predator.angle = Math.atan2(dy, dx);
-      if (!PhysicsSystem.checkCollision(newX, newY, predator.radius, map, offset)) {
+      // Use the tiny hitbox (2) so the predator doesn't snag corners while chasing!
+      if (!PhysicsSystem.checkCollision(newX, newY, 2, map, offset)) {
         predator.x = newX;
         predator.y = newY;
+      } else {
+        // 5. Move smoothly toward target cell (IGNORE PHYSICS)
+        // A* guarantees the path is walkable, so we bypass strict collision.
+        const dirX = dx / distance;
+        const dirY = dy / distance;
+
+        predator.x += dirX * stepDistance;
+        predator.y += dirY * stepDistance;
+
+        // Face direction of current motion
+        predator.angle = Math.atan2(dy, dx);
       }
     }
 
