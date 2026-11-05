@@ -10,31 +10,48 @@
         margin: 0;
         padding: 0;
       }
-      body {
-        background-color: #0a0a0c;
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #050608;
         color: #e6e6e6;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        min-height: 100vh;
-        display: flex;
-        justify-content: center;
-        align-items: center;
       }
       #app {
-        text-align: center;
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+      #ui-overlay {
+        position: absolute;
+        top: 20px;
+        left: 24px;
+        pointer-events: none;
+        user-select: none;
+        z-index: 10;
       }
       h1 {
-        font-size: 4rem;
-        letter-spacing: 0.4em;
+        font-size: 2rem;
+        letter-spacing: 0.35em;
         text-transform: uppercase;
         font-weight: 700;
-        color: #d1d5db;
-        text-shadow: 0 0 24px rgba(0, 0, 0, 0.8), 0 0 12px rgba(255, 255, 255, 0.1);
+        color: rgba(220, 225, 230, 0.8);
+        text-shadow: 0 0 16px rgba(0, 0, 0, 0.9);
+      }
+      #game-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
       }
     </style>
   </head>
   <body>
     <div id="app">
-      <h1>NIGHTFALL</h1>
+      <div id="ui-overlay">
+        <h1>NIGHTFALL</h1>
+      </div>
+      <canvas id="game-canvas"></canvas>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
